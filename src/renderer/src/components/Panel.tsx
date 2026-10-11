@@ -1,10 +1,14 @@
 /**
- * El panel de revelado, a la derecha: el ajuste guardado arriba y las ocho
- * secciones debajo, en el orden de Lightroom.
+ * El panel de revelado, a la derecha: las herramientas arriba (con sus
+ * controles cuando hay una abierta), el ajuste guardado y las secciones
+ * debajo, en el orden de Lightroom.
+ *
+ * Un ajuste guardado lleva todo el revelado menos lo que es de cada foto: el
+ * recorte y lo eliminado. Al aplicarlo, eso se queda como estaba.
  */
 import { useState, type ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
-import { Confirm, Modal, Segmented, useAvisos } from 'casa/ui'
+import { Checkbox, Confirm, Modal, Segmented, useAvisos } from 'casa/ui'
 import { MenuContextual, useMenu } from 'casa/menu'
 import {
   BASICOS,
@@ -12,13 +16,17 @@ import {
   CANALES,
   COLORES_MEZCLA,
   GRADACION,
+  LENTE,
   NOMBRES_MEZCLA,
   PELICULA,
   PRESENCIA,
   RUEDAS,
+  RUIDO,
+  conLoDeLaFoto,
   curvaEsRecta,
   reveladoNeutro,
   seccionTocada,
+  sinLoDeLaFoto,
   type ColorMezcla,
   type DefDeslizador
 } from '@shared/revelado'
@@ -27,6 +35,7 @@ import { Deslizador, Seccion } from './Controles'
 import { CurvaTonos } from './CurvaTonos'
 import { Ruedas } from './Ruedas'
 import { SeccionLut } from './SeccionLut'
+import { BarraHerramientas, PanelEliminar, PanelRecortar } from './Herramientas'
 
 const NEUTRO = reveladoNeutro()
 
@@ -44,7 +53,7 @@ const MUESTRAS: Record<ColorMezcla, string> = {
 type Pestana = 'h' | 's' | 'l'
 
 export function Panel(): ReactNode {
-  const { actual, cambiar, sustituir, guardados, recargarGuardados, luts } = useStore()
+  const { actual, cambiar, sustituir, guardados, recargarGuardados, luts, herramienta } = useStore()
   const { fail, toast } = useAvisos()
   const [pestana, setPestana] = useState<Pestana>('h')
   const [guardando, setGuardando] = useState<string | null>(null)
@@ -56,12 +65,24 @@ export function Panel(): ReactNode {
   const r = actual.revelado
   const apagado = actual.leyendo || !!actual.error
 
-  const lista = (defs: DefDeslizador[]): ReactNode =>
+  const lista = (defs: DefDeslizador[], apagar?: (d: DefDeslizador) => boolean): ReactNode =>
     defs.map((d) => (
-      <Deslizador key={d.clave} def={d} valor={r[d.clave]} inicio={NEUTRO[d.clave]} onChange={(v) => cambiar((x) => ({ ...x, [d.clave]: v }))} />
+      <Deslizador
+        key={d.clave}
+        def={d}
+        valor={r[d.clave]}
+        inicio={NEUTRO[d.clave]}
+        desactivado={apagar?.(d)}
+        onChange={(v) => cambiar((x) => ({ ...x, [d.clave]: v }))}
+      />
     ))
 
-  const coincide = guardados.find((g) => JSON.stringify(g.revelado) === JSON.stringify(r))
+  const propio = JSON.stringify(sinLoDeLaFoto(r))
+  const coincide = guardados.find((g) => JSON.stringify(sinLoDeLaFoto(g.revelado)) === propio)
+  // Los detalles de la reducción de ruido no hacen nada mientras su control está a cero.
+  const ruidoApagado = (d: DefDeslizador): boolean =>
+    ((d.clave === 'ruidoLDetalle' || d.clave === 'ruidoLContraste') && !r.ruidoL) ||
+    ((d.clave === 'ruidoCDetalle' || d.clave === 'ruidoCSuavidad') && !r.ruidoC)
   const mezclaTocada = COLORES_MEZCLA.some((c) => r.mezcla[c].h || r.mezcla[c].s || r.mezcla[c].l)
   const gradTocada = seccionTocada(r, GRADACION) || RUEDAS.some((n) => r.ruedas[n].x || r.ruedas[n].y)
 
@@ -73,7 +94,7 @@ export function Panel(): ReactNode {
 
   const guardar = async (nombre: string): Promise<void> => {
     try {
-      await window.room.guardados.guardar(nombre, r)
+      await window.room.guardados.guardar(nombre, sinLoDeLaFoto(r))
       await recargarGuardados()
       toast(`Guardado como «${nombre.trim()}»`, 'success')
       setGuardando(null)
@@ -85,6 +106,10 @@ export function Panel(): ReactNode {
 
   return (
     <aside className={`panel${apagado ? ' apagado' : ''}`} aria-label="Ajustes de revelado">
+      <BarraHerramientas apagada={apagado} />
+      {!apagado && herramienta === 'recortar' && <PanelRecortar revelado={r} ancho={actual.ancho} alto={actual.alto} />}
+      {!apagado && herramienta === 'eliminar' && <PanelEliminar revelado={r} ruta={actual.ruta} ancho={actual.ancho} alto={actual.alto} />}
+
       <div className="panel-guardado">
         <label htmlFor="ajuste-guardado" className="rotulo">
           Ajuste guardado
@@ -97,7 +122,7 @@ export function Panel(): ReactNode {
             disabled={apagado}
             onChange={(e) => {
               const g = guardados.find((x) => x.id === e.target.value)
-              if (g) sustituir(g.revelado)
+              if (g) sustituir(conLoDeLaFoto(g.revelado, r))
             }}
             onContextMenu={coincide ? abrirMenu(coincide.id) : undefined}
             title={coincide ? 'Clic derecho: borrar este ajuste' : undefined}
@@ -138,11 +163,22 @@ export function Panel(): ReactNode {
           {COLORES_MEZCLA.map((c) => (
             <Deslizador
               key={`${c}-${pestana}`}
-              def={{ clave: 'exposicion', etiqueta: NOMBRES_MEZCLA[c], min: -100, max: 100, paso: 1 }}
+              def={{
+                clave: 'exposicion',
+                etiqueta: NOMBRES_MEZCLA[c],
+                min: -100,
+                max: 100,
+                paso: 1
+              }}
               valor={r.mezcla[c][pestana]}
               inicio={0}
               color={MUESTRAS[c]}
-              onChange={(v) => cambiar((x) => ({ ...x, mezcla: { ...x.mezcla, [c]: { ...x.mezcla[c], [pestana]: v } } }))}
+              onChange={(v) =>
+                cambiar((x) => ({
+                  ...x,
+                  mezcla: { ...x.mezcla, [c]: { ...x.mezcla[c], [pestana]: v } }
+                }))
+              }
             />
           ))}
         </Seccion>
@@ -150,6 +186,16 @@ export function Panel(): ReactNode {
           <Ruedas revelado={r} cambiar={cambiar} />
           <span className="small subtle">Arrastra dentro de una rueda para teñir; doble clic la devuelve al centro</span>
           {lista(GRADACION)}
+        </Seccion>
+        <Seccion id="ruido" titulo="Reducción de ruido" tocada={seccionTocada(r, RUIDO)}>
+          {lista(RUIDO, ruidoApagado)}
+        </Seccion>
+        <Seccion id="lente" titulo="Corrección de lente" tocada={r.aberracion || seccionTocada(r, LENTE)}>
+          <Checkbox checked={r.aberracion} onChange={(v) => cambiar((x) => ({ ...x, aberracion: v }))} label="Quitar la aberración cromática" />
+          <span className="small subtle pista">
+            El iPhone ya corrige la distorsión de sus objetivos: el deslizador es para enderezar más, o para curvar a propósito.
+          </span>
+          {lista(LENTE)}
         </Seccion>
         <Seccion id="calibracion" titulo="Calibración" tocada={seccionTocada(r, CALIBRACION)}>
           {lista(CALIBRACION)}
@@ -174,7 +220,14 @@ export function Panel(): ReactNode {
           x={menu.x}
           y={menu.y}
           onCerrar={cerrarMenu}
-          opciones={[{ etiqueta: 'Borrar este ajuste', icono: <Trash2 size={15} strokeWidth={1.8} />, peligrosa: true, onElegir: () => setBorrando(menu.de) }]}
+          opciones={[
+            {
+              etiqueta: 'Borrar este ajuste',
+              icono: <Trash2 size={15} strokeWidth={1.8} />,
+              peligrosa: true,
+              onElegir: () => setBorrando(menu.de)
+            }
+          ]}
         />
       )}
 
@@ -188,11 +241,7 @@ export function Panel(): ReactNode {
               <button className="btn" onClick={() => setGuardando(null)}>
                 Cancelar
               </button>
-              <button
-                className="btn primary"
-                disabled={!guardando.trim()}
-                onClick={() => void pedirGuardar(guardando)}
-              >
+              <button className="btn primary" disabled={!guardando.trim()} onClick={() => void pedirGuardar(guardando)}>
                 Guardar
               </button>
             </>
@@ -213,7 +262,10 @@ export function Panel(): ReactNode {
               onChange={(e) => setGuardando(e.target.value)}
               aria-label="Nombre del ajuste"
             />
-            <p className="small subtle">Se guarda todo el revelado: los controles, la curva, las ruedas, el grano y el LUT.</p>
+            <p className="small subtle">
+              Se guarda todo el revelado: los controles, la curva, las ruedas, el grano y el LUT. El recorte y lo eliminado son de cada foto y no se
+              guardan.
+            </p>
           </form>
         </Modal>
       )}

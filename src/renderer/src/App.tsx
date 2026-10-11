@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Download } from 'lucide-react'
 import { useAvisos } from 'casa/ui'
 import { recordarTema, seguirAlSistema, vestir, type Tema } from 'casa/tema'
+import { conProporcion } from '@shared/geometria'
 import { useStore } from './lib/store'
 import { Carrete } from './components/Carrete'
 import { Visor } from './components/Visor'
@@ -12,7 +13,7 @@ import { Ajustes } from './components/Ajustes'
 const FOTO = /\.(heic|heif|hif|jpe?g|png)$/i
 
 export function App(): ReactNode {
-  const { actual, abrir, deshacer, rehacer, ajustes } = useStore()
+  const { actual, abrir, deshacer, rehacer, ajustes, herramienta, ponerHerramienta, cambiar } = useStore()
   const { fail } = useAvisos()
   const [exportando, setExportando] = useState(false)
   const [enAjustes, setEnAjustes] = useState(false)
@@ -38,13 +39,29 @@ export function App(): ReactNode {
 
   const puedeExportar = !!actual && !actual.leyendo && !actual.error
 
-  // Los atajos de siempre.
+  // Los atajos de siempre, y los de las herramientas de Lightroom: R, Q y X.
   useEffect(() => {
     const tecla = (e: KeyboardEvent): void => {
-      if (!e.ctrlKey || e.altKey) return
+      if (e.altKey || e.metaKey) return
       if (document.querySelector('.overlay')) return
-      const enTexto = e.target instanceof HTMLInputElement && e.target.type === 'text'
+      const enTexto =
+        (e.target instanceof HTMLInputElement && (e.target.type === 'text' || e.target.type === 'number')) || e.target instanceof HTMLTextAreaElement
       const k = e.key.toLowerCase()
+      if (!e.ctrlKey) {
+        if (enTexto || e.shiftKey || e.repeat || !puedeExportar || !actual) return
+        if (k === 'r') ponerHerramienta(herramienta === 'recortar' ? null : 'recortar')
+        else if (k === 'q') ponerHerramienta(herramienta === 'eliminar' ? null : 'eliminar')
+        else if (k === 'x' && herramienta === 'recortar') {
+          const { proporcion, invertida } = actual.revelado.geometria
+          if (proporcion === 'libre' || proporcion === '1:1') return
+          cambiar((r) => ({
+            ...r,
+            geometria: conProporcion(r.geometria, proporcion, !invertida, actual.ancho, actual.alto)
+          }))
+        } else return
+        e.preventDefault()
+        return
+      }
       if (k === 'o' && !e.shiftKey) {
         e.preventDefault()
         void elegir()
@@ -63,7 +80,7 @@ export function App(): ReactNode {
     }
     window.addEventListener('keydown', tecla)
     return () => window.removeEventListener('keydown', tecla)
-  }, [elegir, deshacer, rehacer, puedeExportar])
+  }, [elegir, deshacer, rehacer, puedeExportar, actual, herramienta, ponerHerramienta, cambiar])
 
   return (
     <div

@@ -10,6 +10,8 @@
  * El motor traduce cada número a lo que le toca.
  */
 
+import { PROPORCIONES, ANGULO_MAX, geometriaNeutra, type Geometria, type Proporcion } from './geometria'
+
 export const CANALES = ['lum', 'r', 'g', 'b'] as const
 export type Canal = (typeof CANALES)[number]
 
@@ -36,6 +38,28 @@ export interface TonoMezcla {
   s: number
   l: number
 }
+
+export const MODOS_MANCHA = ['quitar', 'corregir', 'clonar'] as const
+export type ModoMancha = (typeof MODOS_MANCHA)[number]
+
+/**
+ * Un trazo de Eliminar. Los puntos van en fracciones de la foto tal cual (sin
+ * girar, recortar ni corregir el objetivo): así el trazo sigue en su sitio
+ * aunque luego se recorte o se enderece.
+ */
+export interface Mancha {
+  id: string
+  modo: ModoMancha
+  puntos: Punto[]
+  /** El diámetro del pincel, en fracción del lado largo de la foto. */
+  tamano: number
+  desvanecer: number
+  opacidad: number
+  /** De dónde se copia (Corregir y Clonar), como desplazamiento en fracciones; Quitar no lo usa. */
+  fuente: { dx: number; dy: number } | null
+}
+
+export const TAMANO_MANCHA = { min: 0.003, max: 0.15 }
 
 export interface Revelado {
   v: 1
@@ -73,6 +97,18 @@ export interface Revelado {
   calVerdeS: number
   calAzulH: number
   calAzulS: number
+  // Reducción de ruido
+  ruidoL: number
+  ruidoLDetalle: number
+  ruidoLContraste: number
+  ruidoC: number
+  ruidoCDetalle: number
+  ruidoCSuavidad: number
+  // Corrección de lente
+  aberracion: boolean
+  distorsion: number
+  desflecarMorado: number
+  desflecarVerde: number
   // Película
   grano: number
   tamanoGrano: number
@@ -83,6 +119,9 @@ export interface Revelado {
   // LUT
   lut: string | null
   intensidadLut: number
+  // Lo que es de cada foto y no viaja en un ajuste guardado
+  geometria: Geometria
+  manchas: Mancha[]
 }
 
 /** Las claves de los deslizadores sueltos: todo lo que es un número a secas. */
@@ -130,6 +169,16 @@ export function reveladoNeutro(): Revelado {
     calVerdeS: 0,
     calAzulH: 0,
     calAzulS: 0,
+    ruidoL: 0,
+    ruidoLDetalle: 50,
+    ruidoLContraste: 0,
+    ruidoC: 0,
+    ruidoCDetalle: 50,
+    ruidoCSuavidad: 50,
+    aberracion: false,
+    distorsion: 0,
+    desflecarMorado: 0,
+    desflecarVerde: 0,
     grano: 0,
     tamanoGrano: 25,
     asperezaGrano: 50,
@@ -137,8 +186,20 @@ export function reveladoNeutro(): Revelado {
     vineteado: 0,
     suavizado: 0,
     lut: null,
-    intensidadLut: 100
+    intensidadLut: 100,
+    geometria: geometriaNeutra(),
+    manchas: []
   }
+}
+
+/** Lo que es de cada foto: el recorte y lo eliminado. Un ajuste guardado no lo lleva ni lo pisa. */
+export function sinLoDeLaFoto(r: Revelado): Revelado {
+  return { ...r, geometria: geometriaNeutra(), manchas: [] }
+}
+
+/** Un ajuste guardado aplicado a una foto: todo, menos su recorte y lo eliminado. */
+export function conLoDeLaFoto(guardado: Revelado, foto: Revelado): Revelado {
+  return { ...guardado, geometria: foto.geometria, manchas: foto.manchas }
 }
 
 /* ---------- Los deslizadores, por secciones ---------- */
@@ -199,6 +260,21 @@ export const CALIBRACION: DefDeslizador[] = [
   bi('calVerdeS', 'Primario verde · saturación'),
   bi('calAzulH', 'Primario azul · tono'),
   bi('calAzulS', 'Primario azul · saturación')
+]
+
+export const RUIDO: DefDeslizador[] = [
+  uni('ruidoL', 'Luminancia'),
+  uni('ruidoLDetalle', 'Detalle'),
+  uni('ruidoLContraste', 'Contraste'),
+  uni('ruidoC', 'Color'),
+  uni('ruidoCDetalle', 'Detalle del color'),
+  uni('ruidoCSuavidad', 'Suavidad del color')
+]
+
+export const LENTE: DefDeslizador[] = [
+  bi('distorsion', 'Distorsión'),
+  uni('desflecarMorado', 'Desflecar morado'),
+  uni('desflecarVerde', 'Desflecar verde')
 ]
 
 export const PELICULA: DefDeslizador[] = [
@@ -273,7 +349,7 @@ export function sanear(entrada: unknown): Revelado {
   const r = reveladoNeutro()
   if (!entrada || typeof entrada !== 'object') return r
   const e = entrada as Record<string, unknown>
-  for (const d of [...BASICOS, ...PRESENCIA, ...GRADACION, ...CALIBRACION, ...PELICULA, INTENSIDAD_LUT]) {
+  for (const d of [...BASICOS, ...PRESENCIA, ...GRADACION, ...CALIBRACION, ...RUIDO, ...LENTE, ...PELICULA, INTENSIDAD_LUT]) {
     r[d.clave] = num(e[d.clave], r[d.clave], d.min, d.max)
   }
   const curvas = (e.curvas ?? {}) as Record<string, unknown>
@@ -281,7 +357,11 @@ export function sanear(entrada: unknown): Revelado {
   const mezcla = (e.mezcla ?? {}) as Record<string, Partial<TonoMezcla> | undefined>
   for (const c of COLORES_MEZCLA) {
     const t = mezcla[c] ?? {}
-    r.mezcla[c] = { h: num(t.h, 0, -100, 100), s: num(t.s, 0, -100, 100), l: num(t.l, 0, -100, 100) }
+    r.mezcla[c] = {
+      h: num(t.h, 0, -100, 100),
+      s: num(t.s, 0, -100, 100),
+      l: num(t.l, 0, -100, 100)
+    }
   }
   const ruedas = (e.ruedas ?? {}) as Record<string, Partial<PosRueda> | undefined>
   for (const n of RUEDAS) {
@@ -295,5 +375,62 @@ export function sanear(entrada: unknown): Revelado {
     r.ruedas[n] = { x, y }
   }
   r.lut = typeof e.lut === 'string' && e.lut ? e.lut : null
+  r.aberracion = e.aberracion === true
+  r.geometria = geometria(e.geometria)
+  r.manchas = Array.isArray(e.manchas)
+    ? e.manchas
+        .map(mancha)
+        .filter((m): m is Mancha => m !== null)
+        .slice(0, MAX_MANCHAS)
+    : []
   return r
+}
+
+export const MAX_MANCHAS = 200
+
+function geometria(v: unknown): Geometria {
+  const g = geometriaNeutra()
+  if (!v || typeof v !== 'object') return g
+  const e = v as Record<string, unknown>
+  const giro = num(e.giro, 0, 0, 3)
+  g.giro = Math.round(giro) as Geometria['giro']
+  g.voltH = e.voltH === true
+  g.voltV = e.voltV === true
+  g.angulo = num(e.angulo, 0, -ANGULO_MAX, ANGULO_MAX)
+  g.proporcion = PROPORCIONES.includes(e.proporcion as Proporcion) ? (e.proporcion as Proporcion) : 'original'
+  g.invertida = e.invertida === true
+  const rec = (e.recorte ?? {}) as Record<string, unknown>
+  const x = num(rec.x, 0, 0, 1)
+  const y = num(rec.y, 0, 0, 1)
+  const w = num(rec.w, 1, 0.001, 1 - x)
+  const h = num(rec.h, 1, 0.001, 1 - y)
+  g.recorte = { x, y, w, h }
+  return g
+}
+
+function mancha(v: unknown): Mancha | null {
+  if (!v || typeof v !== 'object') return null
+  const e = v as Record<string, unknown>
+  const puntos = Array.isArray(e.puntos)
+    ? e.puntos
+        .filter((q): q is Punto => !!q && typeof q.x === 'number' && typeof q.y === 'number' && Number.isFinite(q.x) && Number.isFinite(q.y))
+        .map((q) => ({ x: num(q.x, 0, -0.5, 1.5), y: num(q.y, 0, -0.5, 1.5) }))
+        .slice(0, 2000)
+    : []
+  if (!puntos.length) return null
+  const modo = MODOS_MANCHA.includes(e.modo as ModoMancha) ? (e.modo as ModoMancha) : 'quitar'
+  const f = e.fuente as Record<string, unknown> | null | undefined
+  const fuente =
+    modo !== 'quitar' && f && typeof f.dx === 'number' && typeof f.dy === 'number' && Number.isFinite(f.dx) && Number.isFinite(f.dy)
+      ? { dx: num(f.dx, 0, -1, 1), dy: num(f.dy, 0, -1, 1) }
+      : null
+  return {
+    id: typeof e.id === 'string' && e.id ? e.id.slice(0, 40) : Math.random().toString(36).slice(2, 10),
+    modo,
+    puntos,
+    tamano: num(e.tamano, 0.02, TAMANO_MANCHA.min, TAMANO_MANCHA.max),
+    desvanecer: num(e.desvanecer, 50, 0, 100),
+    opacidad: num(e.opacidad, 100, 0, 100),
+    fuente
+  }
 }

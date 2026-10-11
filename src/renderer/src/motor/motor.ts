@@ -2,6 +2,10 @@
  * El motor de revelado: la foto en la tarjeta gráfica y las pasadas que la
  * convierten en lo que dice el revelado.
  *
+ * Antes de revelar puede ir un paso de limpieza a tamaño completo (lo que se
+ * eliminó con el pincel, el objetivo y el ruido), que se guarda aparte y solo
+ * se rehace cuando cambia algo suyo: mover cualquier otro control no lo toca.
+ *
  * La misma cadena sirve para tres cosas:
  *   - pintar la vista previa en el lienzo, al tamaño de la pantalla;
  *   - exportar a tamaño completo, leyendo los píxeles de vuelta;
@@ -10,17 +14,10 @@
  */
 import { CANALES, curvaEsRecta, type Revelado } from '@shared/revelado'
 import { rejillaIdentidad, type Lut3D } from '@shared/cube'
-import { BASE, DESENFOCAR, FINAL, REDUCIR, UMBRAL, VERTICE } from './shaders'
-import {
-  ANCHO_CURVAS,
-  CENTROS_MEZCLA,
-  PROPORCION,
-  balance,
-  matrizCalibracion,
-  mezcla,
-  tablaCurvas,
-  tinteDeRueda
-} from './uniformes'
+import { componer, factorDistorsion, matrizSalida, medidasSalida, type Afin, type Recorte } from '@shared/geometria'
+import type { Parche } from '@shared/curar'
+import { BASE, DESENFOCAR, FINAL, LENTE, REDUCIR, RUIDO_COLOR, RUIDO_LUZ, UMBRAL, VERTICE } from './shaders'
+import { ANCHO_CURVAS, CENTROS_MEZCLA, PROPORCION, balance, matrizCalibracion, mezcla, tablaCurvas, tinteDeRueda } from './uniformes'
 
 export interface Fuente {
   /** JPEG y PNG, decodificados por el navegador. */
@@ -47,10 +44,19 @@ interface Programa {
 
 type Modo = { neutro: boolean; soloColor: boolean; voltear: boolean; p3: boolean; tramado: boolean }
 
+/** Cuánto escalar el rojo y el azul para encajarlos con el verde (aberración cromática). */
+export interface Aberracion {
+  rojo: number
+  azul: number
+}
+
+const IDENTIDAD: Afin = [1, 0, 0, 0, 1, 0]
+const ENTERA: Recorte = { x: 0, y: 0, w: 1, h: 1 }
+
 export class Motor {
   readonly gl: WebGL2RenderingContext
   readonly maxTextura: number
-  private progs: Record<'base' | 'reducir' | 'desenfocar' | 'umbral' | 'final', Programa>
+  private progs: Record<'base' | 'reducir' | 'desenfocar' | 'umbral' | 'final' | 'lente' | 'ruidoColor' | 'ruidoLuz', Programa>
   private vao: WebGLVertexArrayObject
   private fuente: WebGLTexture | null = null
   private fuenteInfo: { ancho: number; alto: number; p3: boolean } | null = null
@@ -61,6 +67,13 @@ export class Motor {
   private negro: WebGLTexture
   private objetivos = new Map<string, Objetivo>()
   private perdido = false
+  /** La foto con los parches de Eliminar pegados, si los hay. */
+  private curada: WebGLTexture | null = null
+  private claveCurada = ''
+  /** La foto ya limpia (objetivo y ruido), a tamaño completo. */
+  private limpia: Objetivo | null = null
+  private claveLimpia = ''
+  private aberracion: Aberracion = { rojo: 0, azul: 0 }
 
   constructor(readonly lienzo: HTMLCanvasElement) {
     const gl = lienzo.getContext('webgl2', {
@@ -88,7 +101,10 @@ export class Motor {
       reducir: this.compilar(REDUCIR),
       desenfocar: this.compilar(DESENFOCAR),
       umbral: this.compilar(UMBRAL),
-      final: this.compilar(FINAL)
+      final: this.compilar(FINAL),
+      lente: this.compilar(LENTE),
+      ruidoColor: this.compilar(RUIDO_COLOR),
+      ruidoLuz: this.compilar(RUIDO_LUZ)
     }
 
     // Un triángulo que cubre toda la pantalla.
@@ -248,12 +264,187 @@ export class Motor {
     gl.generateMipmap(gl.TEXTURE_2D)
     this.fuente = t
     this.fuenteInfo = { ancho: f.ancho, alto: f.alto, p3: f.p3 }
+    this.olvidarLimpieza()
+    this.aberracion = { rojo: 0, azul: 0 }
   }
 
   descargar(): void {
     if (this.fuente) this.gl.deleteTexture(this.fuente)
     this.fuente = null
     this.fuenteInfo = null
+    this.olvidarLimpieza()
+  }
+
+  private olvidarLimpieza(): void {
+    if (this.curada) this.gl.deleteTexture(this.curada)
+    this.curada = null
+    this.claveCurada = ''
+    this.soltarLimpia()
+  }
+
+  private soltarLimpia(): void {
+    if (this.limpia) {
+      this.gl.deleteTexture(this.limpia.tex)
+      this.gl.deleteFramebuffer(this.limpia.fbo)
+    }
+    this.limpia = null
+    this.claveLimpia = ''
+  }
+
+  /** Lo que identifica los parches que hay puestos ahora ('' si ninguno). */
+  get parchesPuestos(): string {
+    return this.claveCurada
+  }
+
+  /**
+   * Los parches de Eliminar, pegados encima de una copia de la foto. `clave`
+   * dice si son los mismos de la última vez (entonces no se hace nada).
+   */
+  ponerParches(parches: Parche[] | null, clave: string): void {
+    if (!this.fuente || !this.fuenteInfo) return
+    if (!parches?.length) {
+      if (this.curada) {
+        this.gl.deleteTexture(this.curada)
+        this.claveLimpia = ''
+      }
+      this.curada = null
+      this.claveCurada = ''
+      return
+    }
+    if (clave === this.claveCurada && this.curada) return
+    const gl = this.gl
+    const { ancho, alto } = this.fuenteInfo
+    if (!this.curada) {
+      this.curada = this.texturaVacia(gl.TEXTURE_2D)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+      gl.texStorage2D(gl.TEXTURE_2D, Math.floor(Math.log2(Math.max(ancho, alto))) + 1, gl.RGBA8, ancho, alto)
+    }
+    // La foto tal cual, copiada dentro de la tarjeta gráfica…
+    const leer = gl.createFramebuffer()!
+    const escribir = gl.createFramebuffer()!
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, leer)
+    gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.fuente, 0)
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, escribir)
+    gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.curada, 0)
+    gl.blitFramebuffer(0, 0, ancho, alto, 0, 0, ancho, alto, gl.COLOR_BUFFER_BIT, gl.NEAREST)
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null)
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null)
+    gl.deleteFramebuffer(leer)
+    gl.deleteFramebuffer(escribir)
+    // …y los parches encima, en orden.
+    gl.bindTexture(gl.TEXTURE_2D, this.curada)
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+    for (const p of parches) gl.texSubImage2D(gl.TEXTURE_2D, 0, p.x, p.y, p.ancho, p.alto, gl.RGBA, gl.UNSIGNED_BYTE, p.datos)
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
+    gl.generateMipmap(gl.TEXTURE_2D)
+    this.claveCurada = clave
+    this.claveLimpia = ''
+  }
+
+  /** La aberración medida en esta foto. */
+  ponerAberracion(a: Aberracion): void {
+    this.aberracion = a
+  }
+
+  /**
+   * Lo que entra en el revelado: la foto ya limpia si hay algo que limpiar, si
+   * no la curada, y si no la foto tal cual. La limpia se rehace solo cuando
+   * cambia algo de lo suyo.
+   */
+  private entrada(r: Revelado): WebGLTexture {
+    const gl = this.gl
+    const base = this.curada ?? this.fuente!
+    const { ancho, alto } = this.fuenteInfo!
+    const ca = r.aberracion ? this.aberracion : { rojo: 0, azul: 0 }
+    const lente = !!(r.distorsion || ca.rojo || ca.azul || r.desflecarMorado || r.desflecarVerde)
+    const color = r.ruidoC > 0
+    const luz = r.ruidoL > 0
+    if (!lente && !color && !luz) {
+      if (this.limpia) this.soltarLimpia()
+      return base
+    }
+    const clave = JSON.stringify([
+      this.claveCurada,
+      lente && [r.distorsion, ca.rojo, ca.azul, r.desflecarMorado, r.desflecarVerde],
+      color && [r.ruidoC, r.ruidoCDetalle, r.ruidoCSuavidad],
+      luz && [r.ruidoL, r.ruidoLDetalle, r.ruidoLContraste]
+    ])
+    if (clave === this.claveLimpia && this.limpia) return this.limpia.tex
+
+    if (!this.limpia || this.limpia.ancho !== ancho || this.limpia.alto !== alto) {
+      this.soltarLimpia()
+      const tex = this.texturaVacia(gl.TEXTURE_2D)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+      gl.texStorage2D(gl.TEXTURE_2D, Math.floor(Math.log2(Math.max(ancho, alto))) + 1, gl.RGBA16F, ancho, alto)
+      const fbo = gl.createFramebuffer()!
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.deleteTexture(tex)
+        gl.deleteFramebuffer(fbo)
+        throw new Error(`No hay memoria en la tarjeta gráfica para limpiar una foto de ${ancho}×${alto}`)
+      }
+      this.limpia = { tex, fbo, ancho, alto, formato: gl.RGBA16F }
+    }
+
+    // Las pasadas que tocan, de una a otra; la última escribe en la limpia.
+    const pasos: Array<(entrada: WebGLTexture, destino: Objetivo) => void> = []
+    if (lente) {
+      pasos.push((e, d) => {
+        const { k, escala } = factorDistorsion(r.distorsion)
+        const u = this.usar(this.progs.lente)
+        gl.uniform1i(u('uTex'), this.textura(0, e))
+        gl.uniform2f(u('uTam'), ancho, alto)
+        gl.uniform1f(u('uK'), k)
+        gl.uniform1f(u('uEscala'), escala)
+        gl.uniform2f(u('uCa'), ca.rojo, ca.azul)
+        gl.uniform1f(u('uMorado'), r.desflecarMorado / 100)
+        gl.uniform1f(u('uVerde'), r.desflecarVerde / 100)
+        this.dibujar(d, ancho, alto)
+      })
+    }
+    if (color) {
+      const radio = (r.ruidoC / 100) * (3 + (r.ruidoCSuavidad / 100) * 13)
+      const sigmaLuz = 0.03 + (1 - r.ruidoCDetalle / 100) * 0.22
+      for (const dir of [
+        [1 / ancho, 0],
+        [0, 1 / alto]
+      ]) {
+        pasos.push((e, d) => {
+          const u = this.usar(this.progs.ruidoColor)
+          gl.uniform1i(u('uTex'), this.textura(0, e))
+          gl.uniform2f(u('uDir'), dir[0], dir[1])
+          gl.uniform1f(u('uRadio'), Math.max(1, radio))
+          gl.uniform1f(u('uSigmaLuz'), sigmaLuz)
+          this.dibujar(d, ancho, alto)
+        })
+      }
+    }
+    if (luz) {
+      pasos.push((e, d) => {
+        const f = r.ruidoL / 100
+        const u = this.usar(this.progs.ruidoLuz)
+        gl.uniform1i(u('uTex'), this.textura(0, e))
+        gl.uniform2f(u('uTexel'), 1 / ancho, 1 / alto)
+        gl.uniform1f(u('uFuerza'), Math.min(1, f * 1.4))
+        gl.uniform1f(u('uSigmaLuz'), (0.015 + f * 0.09) * (1.5 - r.ruidoLDetalle / 100))
+        gl.uniform1f(u('uSigmaEsp'), 0.8 + f * 1.6)
+        gl.uniform1f(u('uContraste'), r.ruidoLContraste / 100)
+        this.dibujar(d, ancho, alto)
+      })
+    }
+    let actual = base
+    pasos.forEach((paso, i) => {
+      const ultimo = i === pasos.length - 1
+      const destino = ultimo ? this.limpia! : this.objetivo(`limpiar:${i % 2}`, ancho, alto, gl.RGBA16F)
+      paso(actual, destino)
+      actual = destino.tex
+    })
+    this.soltar('limpiar:')
+    gl.bindTexture(gl.TEXTURE_2D, this.limpia!.tex)
+    gl.generateMipmap(gl.TEXTURE_2D)
+    this.claveLimpia = clave
+    return this.limpia!.tex
   }
 
   /* ---------- Las pasadas ---------- */
@@ -301,10 +492,24 @@ export class Motor {
    * `prefijo` separa las imágenes intermedias de la vista previa, las de
    * exportar y las del horneado, para que no se pisen.
    */
-  private revelar(r: Revelado, entrada: WebGLTexture, ancho: number, alto: number, destino: Objetivo | null, modo: Modo, prefijo: string): void {
+  private revelar(
+    r: Revelado,
+    entrada: WebGLTexture,
+    ancho: number,
+    alto: number,
+    destino: Objetivo | null,
+    modo: Modo,
+    prefijo: string,
+    geo: Afin = IDENTIDAD,
+    ventana: Recorte = ENTERA
+  ): void {
     const gl = this.gl
     if (this.contextoPerdido) throw new Error('La tarjeta gráfica se ha reiniciado: vuelve a abrir la foto')
-    const largo = Math.max(ancho, alto)
+    // Con zoom, lo que se pinta es un trozo de una foto más grande: los radios y el grano van con ella.
+    const anchoTotal = ancho / ventana.w
+    const altoTotal = alto / ventana.h
+    const largo = Math.max(anchoTotal, altoTotal)
+    geo = componer(geo, [ventana.w, 0, ventana.x, 0, ventana.h, ventana.y])
 
     // 1. Base
     const base = this.objetivo(`${prefijo}base`, ancho, alto, modo.soloColor ? gl.RGBA32F : gl.RGBA16F)
@@ -316,6 +521,8 @@ export class Motor {
     gl.uniform3fv(u('uBalance'), balance(r.temperatura, r.tinte, r.exposicion))
     gl.uniformMatrix3fv(u('uCal'), false, matrizCalibracion(r))
     gl.uniform1f(u('uCalSombras'), r.calSombras / 100)
+    // WebGL quiere las matrices por columnas.
+    gl.uniformMatrix3fv(u('uGeo'), false, [geo[0], geo[3], 0, geo[1], geo[4], 0, geo[2], geo[5], 1])
     this.dibujar(base, ancho, alto)
 
     // 2. Desenfoques: solo los que hacen falta.
@@ -395,7 +602,9 @@ export class Motor {
 
     gl.uniform1f(u('uHaloCant'), r.halo / 100)
     gl.uniform1f(u('uVineta'), r.vineteado / 100)
-    gl.uniform1f(u('uAspecto'), ancho / alto)
+    gl.uniform1f(u('uAspecto'), anchoTotal / altoTotal)
+    gl.uniform4f(u('uVentana'), ventana.x, ventana.y, ventana.w, ventana.h)
+    gl.uniform2f(u('uOrigen'), ventana.x * anchoTotal, (1 - ventana.y - ventana.h) * altoTotal)
     gl.uniform1f(u('uGrano'), r.grano / 100)
     const tam = PROPORCION.granoMin + (PROPORCION.granoMax - PROPORCION.granoMin) * (r.tamanoGrano / 100)
     gl.uniform1f(u('uGranoTam'), Math.max(0.6, tam * largo))
@@ -407,21 +616,61 @@ export class Motor {
 
   /* ---------- Lo que se le pide desde fuera ---------- */
 
-  /** La vista previa: el lienzo pasa a medir `ancho × alto` y se pinta. */
-  pintar(r: Revelado, ancho: number, alto: number, neutro: boolean): void {
+  /**
+   * Lo que mide la foto revelada a tamaño completo: lo que queda dentro del
+   * recorte. Con `marcoEntero`, la foto entera girada (el modo Recortar).
+   */
+  medidasSalida(r: Revelado, marcoEntero = false): { ancho: number; alto: number } | null {
+    if (!this.fuenteInfo) return null
+    const { ancho, alto } = this.fuenteInfo
+    return medidasSalida(r.geometria, ancho, alto, marcoEntero ? { x: 0, y: 0, w: 1, h: 1 } : undefined)
+  }
+
+  private geo(r: Revelado, marcoEntero: boolean): Afin {
+    const { ancho, alto } = this.fuenteInfo!
+    return matrizSalida(r.geometria, ancho, alto, marcoEntero ? { x: 0, y: 0, w: 1, h: 1 } : undefined)
+  }
+
+  /**
+   * La vista previa: el lienzo pasa a medir `ancho × alto` y se pinta. `neutro`
+   * es el antes: la foto sin revelar ni limpiar, con el mismo encuadre. Con
+   * `ventana` (en fracciones de la foto revelada) se pinta solo ese trozo: el zoom.
+   */
+  pintar(r: Revelado, ancho: number, alto: number, neutro: boolean, marcoEntero = false, ventana: Recorte = ENTERA): void {
     if (!this.fuente || !this.fuenteInfo) return
     if (this.lienzo.width !== ancho) this.lienzo.width = ancho
     if (this.lienzo.height !== alto) this.lienzo.height = alto
-    this.revelar(r, this.fuente, ancho, alto, null, { neutro, soloColor: false, voltear: true, p3: this.fuenteInfo.p3, tramado: true }, 'vista:')
+    const entrada = neutro ? this.fuente : this.entrada(r)
+    this.revelar(
+      r,
+      entrada,
+      ancho,
+      alto,
+      null,
+      { neutro, soloColor: false, voltear: true, p3: this.fuenteInfo.p3, tramado: true },
+      'vista:',
+      this.geo(r, marcoEntero),
+      ventana
+    )
   }
 
   /** Revela a `ancho × alto` y devuelve los píxeles RGBA, con la fila de arriba primero. */
   leer(r: Revelado, ancho: number, alto: number, prefijo = 'exportar:'): Uint8Array {
     if (!this.fuente || !this.fuenteInfo) throw new Error('No hay foto cargada')
     const gl = this.gl
+    const entrada = this.entrada(r)
     const sal = this.objetivo(`${prefijo}salida`, ancho, alto, gl.RGBA8)
     try {
-      this.revelar(r, this.fuente, ancho, alto, sal, { neutro: false, soloColor: false, voltear: true, p3: this.fuenteInfo.p3, tramado: true }, prefijo)
+      this.revelar(
+        r,
+        entrada,
+        ancho,
+        alto,
+        sal,
+        { neutro: false, soloColor: false, voltear: true, p3: this.fuenteInfo.p3, tramado: true },
+        prefijo,
+        this.geo(r, false)
+      )
       const px = new Uint8Array(ancho * alto * 4)
       gl.bindFramebuffer(gl.FRAMEBUFFER, sal.fbo)
       gl.readPixels(0, 0, ancho, alto, gl.RGBA, gl.UNSIGNED_BYTE, px)
@@ -431,11 +680,17 @@ export class Motor {
     }
   }
 
-  /** La foto revelada a tamaño completo. */
-  exportar(r: Revelado): { ancho: number; alto: number; pixeles: Uint8Array } {
-    const m = this.medidas
+  /**
+   * La foto revelada, a tamaño completo o con el lado largo en `lado` píxeles
+   * (nunca más grande de lo que es).
+   */
+  exportar(r: Revelado, lado: number | null = null): { ancho: number; alto: number; pixeles: Uint8Array } {
+    const m = this.medidasSalida(r)
     if (!m) throw new Error('No hay foto cargada')
-    return { ...m, pixeles: this.leer(r, m.ancho, m.alto) }
+    const k = lado ? Math.min(1, lado / Math.max(m.ancho, m.alto)) : 1
+    const ancho = Math.max(1, Math.round(m.ancho * k))
+    const alto = Math.max(1, Math.round(m.alto * k))
+    return { ancho, alto, pixeles: this.leer(r, ancho, alto) }
   }
 
   /**

@@ -82,9 +82,9 @@ export function olvidarFoto(ruta: string): void {
 
 /* ---------- Miniaturas ---------- */
 
-/** La foto revelada en pequeño, como imagen para el carrete. */
+/** La foto revelada en pequeño, como imagen para el carrete: ya recortada. */
 export function miniatura(m: Motor, revelado: Parameters<Motor['leer']>[0], lado = 240): string {
-  const medidas = m.medidas
+  const medidas = m.medidasSalida(revelado)
   if (!medidas) return ''
   const k = lado / Math.max(medidas.ancho, medidas.alto)
   const ancho = Math.max(1, Math.round(medidas.ancho * k))

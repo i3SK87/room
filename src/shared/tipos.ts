@@ -43,6 +43,9 @@ export interface Ajustes {
   carpetaExportar: string | null
   formato: Formato
   calidad: number
+  /** Exportar a tamaño completo o con el lado largo en `lado` píxeles. */
+  tamano: 'completo' | 'lado'
+  lado: number
   /** Al abrir, mirar en GitHub si hay versión nueva. */
   buscarVersiones: boolean
 }
@@ -53,6 +56,8 @@ export const AJUSTES_DE_FABRICA: Ajustes = {
   carpetaExportar: null,
   formato: 'jpeg',
   calidad: 92,
+  tamano: 'completo',
+  lado: 2048,
   buscarVersiones: true
 }
 

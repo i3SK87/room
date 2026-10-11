@@ -3,8 +3,11 @@
  *
  * El revelado va por pasadas:
  *
- *   1. BASE     la foto en luz lineal: de P3 a sRGB si hace falta, balance de
- *               blancos, exposición y calibración.
+ *   0. LIMPIAR  solo si hace falta, a tamaño completo y guardado aparte:
+ *               distorsión, aberración, flecos y ruido.
+ *   1. BASE     la foto en luz lineal, ya recortada, enderezada y girada: de
+ *               P3 a sRGB si hace falta, balance de blancos, exposición y
+ *               calibración.
  *   2. Desenfoques de la base, para lo que mira alrededor de cada píxel: uno
  *      fino (textura y suavizado), uno ancho a un cuarto de tamaño (claridad y
  *      neblina) y el de las luces fuertes (el halo).
@@ -69,7 +72,9 @@ vec3 deOklab(vec3 L) {
 
 /* ---------- 1. Base ---------- */
 
-export const BASE = COMUN + /* glsl */ `
+export const BASE =
+  COMUN +
+  /* glsl */ `
 uniform sampler2D uFuente;
 uniform bool uVoltear;
 uniform bool uP3;
@@ -77,6 +82,8 @@ uniform bool uNeutro;
 uniform vec3 uBalance;
 uniform mat3 uCal;
 uniform float uCalSombras;
+// De la salida a la foto: recorte, enderezado, volteos y giros, en una matriz.
+uniform mat3 uGeo;
 
 // Display P3 lineal a sRGB lineal (por columnas).
 const mat3 P3_A_SRGB = mat3(
@@ -85,7 +92,13 @@ const mat3 P3_A_SRGB = mat3(
   0.0, 0.0, 1.0982735);
 
 void main() {
-  vec2 uv = uVoltear ? vec2(vUv.x, 1.0 - vUv.y) : vUv;
+  vec2 t = uVoltear ? vec2(vUv.x, 1.0 - vUv.y) : vUv;
+  vec2 uv = (uGeo * vec3(t, 1.0)).xy;
+  // Lo que cae fuera de la foto (al enderezar, en el modo Recortar) va en negro.
+  if (any(lessThan(uv, vec2(-1e-4))) || any(greaterThan(uv, vec2(1.0 + 1e-4)))) {
+    salida = vec4(0.0, 0.0, 0.0, 1.0);
+    return;
+  }
   vec3 c = aLineal(texture(uFuente, uv).rgb);
   if (uP3) c = P3_A_SRGB * c;
   if (!uNeutro) {
@@ -99,10 +112,132 @@ void main() {
 }
 `
 
+/* ---------- 0. Limpiar, a tamaño completo ---------- */
+
+/*
+ * Antes de revelar, lo que arregla la foto en sí: el objetivo y el ruido. Va
+ * a tamaño completo, píxel a píxel de la foto, porque el ruido y los flecos
+ * de color son cosa de un píxel o dos; la vista previa lo ve ya reducido.
+ * Todo en la codificación de la foto (sRGB), que es donde se ve el ruido.
+ */
+
+/** Distorsión y aberración cromática: dónde leer cada canal. Y desflecar. */
+export const LENTE =
+  COMUN +
+  /* glsl */ `
+uniform sampler2D uTex;
+uniform vec2 uTam;
+uniform float uK;
+uniform float uEscala;
+uniform vec2 uCa;
+uniform float uMorado;
+uniform float uVerde;
+
+float difAngulo(float a, float b) { return mod(a - b + 540.0, 360.0) - 180.0; }
+
+void main() {
+  vec2 q = (vUv - 0.5) * uTam / (0.5 * length(uTam));
+  vec2 s = 0.5 + (vUv - 0.5) * (1.0 - uK * dot(q, q)) * uEscala;
+  vec3 c = vec3(
+    texture(uTex, 0.5 + (s - 0.5) * (1.0 + uCa.x)).r,
+    texture(uTex, s).g,
+    texture(uTex, 0.5 + (s - 0.5) * (1.0 + uCa.y)).b);
+  if (uMorado > 0.0 || uVerde > 0.0) {
+    // Los flecos salen en los bordes con mucho contraste: se mira cuánto cambia la luz alrededor.
+    vec2 px = 2.0 / uTam;
+    float mn = 1.0, mx = 0.0;
+    for (int i = 0; i < 8; i++) {
+      float a = float(i) * 0.7853982;
+      float l = luma(texture(uTex, s + vec2(cos(a), sin(a)) * px).rgb);
+      mn = min(mn, l);
+      mx = max(mx, l);
+    }
+    float borde = smoothstep(0.08, 0.3, mx - mn);
+    vec3 lab = aOklab(aLineal(c));
+    float C = length(lab.yz);
+    float h = degrees(atan(lab.z, lab.y));
+    float morado = uMorado * (1.0 - smoothstep(22.0, 45.0, abs(difAngulo(h, 318.0))));
+    float verde = uVerde * (1.0 - smoothstep(22.0, 45.0, abs(difAngulo(h, 145.0))));
+    float quita = clamp((morado + verde) * 1.6 * borde * smoothstep(0.015, 0.05, C), 0.0, 1.0);
+    lab.yz *= 1.0 - quita;
+    c = clamp(aSrgb(max(deOklab(lab), 0.0)), 0.0, 1.0);
+  }
+  salida = vec4(c, 1.0);
+}
+`
+
+/**
+ * Ruido de color, en una dirección (se pasa dos veces): se promedia el color
+ * con el de los vecinos de luz parecida, y la luz de cada píxel se queda como
+ * estaba. Así las manchas de colores desaparecen sin emborronar la foto.
+ */
+export const RUIDO_COLOR =
+  COMUN +
+  /* glsl */ `
+uniform sampler2D uTex;
+uniform vec2 uDir;
+uniform float uRadio;
+uniform float uSigmaLuz;
+void main() {
+  vec3 c0 = texture(uTex, vUv).rgb;
+  float y0 = luma(c0);
+  vec3 suma = vec3(0.0);
+  float peso = 0.0;
+  float sigma = max(uRadio / 2.2, 0.5);
+  for (int i = -16; i <= 16; i++) {
+    float k = float(i);
+    if (abs(k) > uRadio) continue;
+    vec3 c = texture(uTex, vUv + uDir * k).rgb;
+    float y = luma(c);
+    float dl = (y - y0) / uSigmaLuz;
+    float w = exp(-k * k / (2.0 * sigma * sigma) - 0.5 * dl * dl);
+    suma += (c - y) * w;
+    peso += w;
+  }
+  salida = vec4(clamp(y0 + suma / peso, 0.0, 1.0), 1.0);
+}
+`
+
+/**
+ * Ruido de luz: un bilateral de 7×7 sobre la luz. Promedia con los vecinos
+ * que se le parecen y deja los bordes. Detalle decide cuánto se tienen que
+ * parecer; Contraste devuelve parte de la textura que se lleva.
+ */
+export const RUIDO_LUZ =
+  COMUN +
+  /* glsl */ `
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uFuerza;
+uniform float uSigmaLuz;
+uniform float uSigmaEsp;
+uniform float uContraste;
+void main() {
+  vec3 c0 = texture(uTex, vUv).rgb;
+  float y0 = luma(c0);
+  float suma = 0.0;
+  float peso = 0.0;
+  for (int dy = -3; dy <= 3; dy++)
+    for (int dx = -3; dx <= 3; dx++) {
+      vec2 o = vec2(float(dx), float(dy));
+      float y = luma(texture(uTex, vUv + o * uTexel).rgb);
+      float dl = (y - y0) / uSigmaLuz;
+      float w = exp(-dot(o, o) / (2.0 * uSigmaEsp * uSigmaEsp) - 0.5 * dl * dl);
+      suma += y * w;
+      peso += w;
+    }
+  float yf = mix(y0, suma / peso, uFuerza);
+  yf = mix(yf, y0, uContraste * 0.5);
+  salida = vec4(clamp(c0 + (yf - y0), 0.0, 1.0), 1.0);
+}
+`
+
 /* ---------- 2. Reducir y desenfocar ---------- */
 
 /** A un cuarto: cuatro lecturas bilineales cubren el cuadro de 4×4. */
-export const REDUCIR = COMUN + /* glsl */ `
+export const REDUCIR =
+  COMUN +
+  /* glsl */ `
 uniform sampler2D uTex;
 uniform vec2 uTexel;
 void main() {
@@ -115,7 +250,9 @@ void main() {
 `
 
 /** Gaussiano en una dirección. Con radios grandes salta de dos en dos, de tres en tres… */
-export const DESENFOCAR = COMUN + /* glsl */ `
+export const DESENFOCAR =
+  COMUN +
+  /* glsl */ `
 uniform sampler2D uTex;
 uniform vec2 uDir;
 uniform float uSigma;
@@ -139,7 +276,9 @@ void main() {
 `
 
 /** Lo que va a brillar en el halo: solo las luces fuertes. */
-export const UMBRAL = COMUN + /* glsl */ `
+export const UMBRAL =
+  COMUN +
+  /* glsl */ `
 uniform sampler2D uTex;
 void main() {
   vec3 c = texture(uTex, vUv).rgb;
@@ -149,7 +288,9 @@ void main() {
 
 /* ---------- 3. Final ---------- */
 
-export const FINAL = COMUN + /* glsl */ `
+export const FINAL =
+  COMUN +
+  /* glsl */ `
 uniform sampler2D uBase;
 uniform sampler2D uPeq;
 uniform sampler2D uGrande;
@@ -195,6 +336,10 @@ uniform vec3 uLutMax;
 uniform float uHaloCant;
 uniform float uVineta;
 uniform float uAspecto;
+// Con zoom se revela solo un trozo de la foto: dónde cae en ella (x, y, ancho, alto)
+// y en qué píxel empieza, para que el viñeteado y el grano no se muevan al desplazarse.
+uniform vec4 uVentana;
+uniform vec2 uOrigen;
 uniform float uGrano;
 uniform float uGranoTam;
 uniform float uGranoAsp;
@@ -333,14 +478,15 @@ void main() {
     // Halo: la luz que rebota en la base de la película y vuelve roja.
     c += texture(uHalo, vUv).rgb * vec3(1.0, 0.32, 0.12) * uHaloCant * 1.8;
     // Viñeteado: 0 en el centro, 1 en las esquinas.
-    vec2 q = (vUv - 0.5) * 2.0 * vec2(uAspecto, 1.0) / length(vec2(uAspecto, 1.0));
+    vec2 g = uVentana.xy + vec2(vUv.x, 1.0 - vUv.y) * uVentana.zw;
+    vec2 q = (g - 0.5) * 2.0 * vec2(uAspecto, 1.0) / length(vec2(uAspecto, 1.0));
     float v = smoothstep(0.3, 1.05, length(q));
     c *= 1.0 - uVineta * 0.9 * v * v;
   }
 
   vec3 e = aSrgb(c);
   if (!uSoloColor && uGrano > 0.0) {
-    float n = grano(gl_FragCoord.xy / uGranoTam + uSemilla);
+    float n = grano((gl_FragCoord.xy + uOrigen) / uGranoTam + uSemilla);
     float le = clamp(luma(e), 0.0, 1.0);
     e += n * uGrano * 0.16 * (0.35 + 2.6 * le * (1.0 - le));
   }

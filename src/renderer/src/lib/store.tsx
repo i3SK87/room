@@ -9,7 +9,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAvisos } from 'casa/ui'
-import { estaTocado, reveladoNeutro, type Revelado } from '@shared/revelado'
+import { estaTocado, reveladoNeutro, type ModoMancha, type Revelado } from '@shared/revelado'
 import { leerCube, type Lut3D } from '@shared/cube'
 import type { Ajustes, Guardado, LutInfo } from '@shared/tipos'
 import { AJUSTES_DE_FABRICA } from '@shared/tipos'
@@ -20,6 +20,9 @@ export interface Foto {
   ruta: string
   nombre: string
   resumen: string | null
+  /** Lo que mide la foto tal cual (0 mientras se lee). */
+  ancho: number
+  alto: number
   miniatura: string | null
   revelado: Revelado
   /** Mientras se lee por primera vez. */
@@ -34,7 +37,29 @@ interface Historial {
   asentado: Revelado
 }
 
+export type Herramienta = 'recortar' | 'eliminar'
+
+/** Cómo pinta el pincel de Eliminar los trazos nuevos. */
+export interface Pincel {
+  modo: ModoMancha
+  tamano: number
+  desvanecer: number
+  opacidad: number
+}
+
 interface Estado {
+  /** La herramienta abierta encima de la foto, si hay alguna. */
+  herramienta: Herramienta | null
+  ponerHerramienta: (h: Herramienta | null) => void
+  /** El trazo de Eliminar elegido: los controles del pincel lo cambian a él. */
+  manchaSel: string | null
+  elegirMancha: (id: string | null) => void
+  pincel: Pincel
+  cambiarPincel: (cambios: Partial<Pincel>) => void
+  /** Recortar: trazar una línea sobre el horizonte para enderezar. */
+  regla: boolean
+  ponerRegla: (v: boolean) => void
+
   fotos: Foto[]
   actual: Foto | null
   seleccionar: (id: string) => void
@@ -73,6 +98,21 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
   const [luts, setLuts] = useState<LutInfo[]>([])
   const [ajustes, setAjustes] = useState<Ajustes>(AJUSTES_DE_FABRICA)
   const [lutActual, setLutActual] = useState<Lut3D | 'falta' | null>(null)
+  const [herramienta, setHerramienta] = useState<Herramienta | null>(null)
+  const [manchaSel, setManchaSel] = useState<string | null>(null)
+  const [pincel, setPincel] = useState<Pincel>({
+    modo: 'quitar',
+    tamano: 0.02,
+    desvanecer: 50,
+    opacidad: 100
+  })
+  const [regla, setRegla] = useState(false)
+  const ponerHerramienta = useCallback((h: Herramienta | null) => {
+    setHerramienta(h)
+    setManchaSel(null)
+    setRegla(false)
+  }, [])
+  const cambiarPincel = useCallback((cambios: Partial<Pincel>) => setPincel((p) => ({ ...p, ...cambios })), [])
 
   // Lo que necesitan las funciones sin volver a crearse en cada cambio.
   const fotosRef = useRef(fotos)
@@ -231,6 +271,7 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
     (id: string) => {
       asentar()
       setActualId(id)
+      setManchaSel(null)
     },
     [asentar]
   )
@@ -261,7 +302,18 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
         }
         setFotos((lista) =>
           lista.map((f) =>
-            f.id === id ? { ...f, nombre: info.nombre, resumen: info.resumen, revelado, miniatura: mini, leyendo: false } : f
+            f.id === id
+              ? {
+                  ...f,
+                  nombre: info.nombre,
+                  resumen: info.resumen,
+                  ancho: fuente.ancho,
+                  alto: fuente.alto,
+                  revelado,
+                  miniatura: mini,
+                  leyendo: false
+                }
+              : f
           )
         )
       } catch (e) {
@@ -282,7 +334,18 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
         const id = ruta.toLowerCase()
         if (yaEstan.has(id) || nuevas.some((n) => n.id === id)) continue
         const nombre = ruta.split(/[\\/]/).pop() ?? ruta
-        nuevas.push({ id, ruta, nombre, resumen: null, miniatura: null, revelado: reveladoNeutro(), leyendo: true, error: null })
+        nuevas.push({
+          id,
+          ruta,
+          nombre,
+          resumen: null,
+          ancho: 0,
+          alto: 0,
+          miniatura: null,
+          revelado: reveladoNeutro(),
+          leyendo: true,
+          error: null
+        })
       }
       const primera = nuevas[0]?.id ?? rutas[0].toLowerCase()
       if (nuevas.length) {
@@ -317,6 +380,14 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
 
   const valor = useMemo<Estado>(
     () => ({
+      herramienta,
+      ponerHerramienta,
+      manchaSel,
+      elegirMancha: setManchaSel,
+      pincel,
+      cambiarPincel,
+      regla,
+      ponerRegla: setRegla,
       fotos,
       actual,
       seleccionar,
@@ -335,7 +406,31 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
       ajustes,
       cambiarAjustes
     }),
-    [fotos, actual, seleccionar, abrir, quitar, cambiar, sustituir, deshacer, rehacer, ponerMiniatura, guardados, recargarGuardados, luts, recargarLuts, lutActual, ajustes, cambiarAjustes]
+    [
+      herramienta,
+      ponerHerramienta,
+      manchaSel,
+      pincel,
+      cambiarPincel,
+      regla,
+      fotos,
+      actual,
+      seleccionar,
+      abrir,
+      quitar,
+      cambiar,
+      sustituir,
+      deshacer,
+      rehacer,
+      ponerMiniatura,
+      guardados,
+      recargarGuardados,
+      luts,
+      recargarLuts,
+      lutActual,
+      ajustes,
+      cambiarAjustes
+    ]
   )
 
   return <Contexto.Provider value={valor}>{children}</Contexto.Provider>
