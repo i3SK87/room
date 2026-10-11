@@ -798,3 +798,71 @@
 .capa.capa-mano:active {
   cursor: grabbing;
 }
+
+/* ---------- Historial ---------- */
+
+.carrete-lista {
+  flex: 0 1 auto;
+  overflow-y: auto;
+  max-height: 42%;
+}
+
+.historial {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 14px;
+}
+
+.historial-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.historial-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.historial-paso {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sidebar-fg);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.historial-paso:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.historial-paso.actual {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.historial-paso.futuro {
+  opacity: 0.45;
+}

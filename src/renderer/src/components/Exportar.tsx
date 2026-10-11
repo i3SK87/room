@@ -36,7 +36,9 @@ function medidasDe(f: Foto, ajustes: Ajustes): { ancho: number; alto: number } {
 async function exportarUna(f: Foto, carpeta: string, formato: Formato, calidad: number, lado: number | null): Promise<string> {
   const m = motorTrabajo()
   const { fuente } = await fotoDecodificada(f.ruta)
-  const parches = await parchesDe(f.ruta, fuente, f.revelado.manchas)
+  // Si otra petición la deja atrás (la vista pidiendo a la vez), se vuelve a pedir: estos trazos son los que valen.
+  let parches = await parchesDe(f.ruta, fuente, f.revelado.manchas)
+  while (parches === null) parches = await parchesDe(f.ruta, fuente, f.revelado.manchas)
   m.cargar(fuente)
   try {
     m.ponerParches(parches, claveManchas(f.revelado.manchas))

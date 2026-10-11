@@ -107,18 +107,65 @@ function pedir(clave: string, manchas: Mancha[]): Promise<Respuesta> {
   })
 }
 
-/** Los parches de los trazos de una foto, en orden. */
-export async function parchesDe(ruta: string, f: Fuente, manchas: Mancha[]): Promise<Parche[]> {
+/*
+ * Mientras el trabajador está con una petición, de las que llegan para la misma
+ * foto solo vale la última: mover el tamaño de un trazo manda decenas, y
+ * hacerlas todas en fila dejaría «Rellenando…» colgado un buen rato. Las que se
+ * quedan atrás se contestan como superadas.
+ */
+const enCurso = new Set<string>()
+const siguientes = new Map<string, { manchas: Mancha[]; ok: (r: Respuesta | 'superada') => void }>()
+
+function pedirUltima(clave: string, manchas: Mancha[]): Promise<Respuesta | 'superada'> {
+  if (!enCurso.has(clave)) {
+    enCurso.add(clave)
+    return pedir(clave, manchas).finally(() => {
+      enCurso.delete(clave)
+      const s = siguientes.get(clave)
+      if (s) {
+        siguientes.delete(clave)
+        void pedirUltima(clave, s.manchas).then(s.ok)
+      }
+    })
+  }
+  return new Promise((ok) => {
+    siguientes.get(clave)?.ok('superada')
+    siguientes.set(clave, { manchas, ok })
+  })
+}
+
+/** Los parches de los trazos de una foto, en orden. Null si otra petición más nueva la ha dejado atrás. */
+export async function parchesDe(ruta: string, f: Fuente, manchas: Mancha[]): Promise<Parche[] | null> {
   if (!manchas.length) return []
   const clave = ruta.toLowerCase()
   if (!enviadas.includes(clave)) enviar(clave, f)
-  let r = await pedir(clave, manchas)
+  let r = await pedirUltima(clave, manchas)
+  if (r === 'superada') return null
   if ('sinImagen' in r && r.sinImagen) {
     enviar(clave, f)
     r = await pedir(clave, manchas)
   }
   if ('error' in r) throw new Error(`No se ha podido eliminar: ${r.error}`)
   return r.parches
+}
+
+/**
+ * Dejar preparada la foto para Eliminar (sus píxeles, la copia pequeña para
+ * buscar de dónde copiar y la del trabajador) cuando la ventana esté libre:
+ * así el primer trazo no espera a nada de esto.
+ */
+export function prepararEliminar(ruta: string, f: Fuente): void {
+  const clave = ruta.toLowerCase()
+  const hacer = (): void => {
+    try {
+      reducidaDe(f)
+      if (!enviadas.includes(clave)) enviar(clave, f)
+    } catch {
+      // Si no se puede ahora, se hará con el primer trazo.
+    }
+  }
+  if ('requestIdleCallback' in window) requestIdleCallback(hacer, { timeout: 1500 })
+  else setTimeout(hacer, 200)
 }
 
 /** Lo que identifica unos trazos: si no cambia, los parches tampoco. */

@@ -28,7 +28,10 @@ tal cual; nada se aplica solo.
   alrededor de cada píxel (textura, claridad, neblina, grano, halo, viñeteado,
   suavizado) viaja en los ajustes guardados.
 - **Ajustes guardados** con nombre, y el revelado de cada archivo se recuerda:
-  al volver a abrir una foto sigue como se dejó. Ctrl+Z / Ctrl+Y.
+  al volver a abrir una foto sigue como se dejó.
+- **Historial** debajo del carrete, como en Lightroom: cada paso con su nombre
+  («Exposición +2,50», «Trazo: Quitar»…); pinchar uno vuelve a él. Ctrl+Z /
+  Ctrl+Y se mueven por él.
 - **Exportar** a tamaño completo o con el lado largo que se diga (nunca
   amplía), en JPEG o PNG, con el EXIF del original (orientación normal, medidas
   nuevas, sin miniatura). Nunca pisa un archivo.
@@ -61,7 +64,9 @@ aplicación sin abrirla en el escritorio: compilar (`npx electron-vite build`),
 empaquetar `test/arnes/entrada.ts` en `out/test/arnes.cjs` (ver el arnés) y
 `MUESTRAS=… SALIDA=… npx electron test/arnes/capturar.cjs` (con
 `ESCENA=herramientas` prueba Recortar, Eliminar y exportar con el ratón y el
-teclado de verdad, a una carpeta temporal).
+teclado de verdad, a una carpeta temporal). `test/arnes/explorar.cjs` recorre
+toda la aplicación midiendo fotogramas, tiempo de la tarjeta gráfica, tareas
+largas y errores; con `VISIBLE=1`, en una ventana normal del escritorio.
 
 ## Publicar
 

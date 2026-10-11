@@ -1,7 +1,7 @@
 {
   "name": "room",
   "productName": "ROOM",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cuarto de revelado para Windows: las fotos del iPhone con aspecto de carrete",
   "author": "okli2",
   "private": true,

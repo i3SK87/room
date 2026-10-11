@@ -25,7 +25,7 @@ import type { Mancha } from '@shared/revelado'
 import type { Recorte } from '@shared/geometria'
 import { Motor, type Fuente } from '../motor/motor'
 import { fotoDecodificada, miniatura, motorVista, ponerMotorVista } from '../lib/motores'
-import { aberracionDe, claveManchas, fuenteAutomatica, parchesDe } from '../lib/curar'
+import { aberracionDe, claveManchas, fuenteAutomatica, parchesDe, prepararEliminar } from '../lib/curar'
 import { useStore } from '../lib/store'
 import { CapaRecorte } from './CapaRecorte'
 import { CapaEliminar } from './CapaEliminar'
@@ -115,6 +115,8 @@ export function Visor({ alAbrir }: { alAbrir: () => void }): ReactNode {
   const clave = manchas ? claveManchas(manchas) : ''
   useEffect(() => {
     if (!lista || !motor || !ruta || !fuente.current || !manchas) return
+    // Lo que se estuviera rellenando ya no vale: si estos trazos ya están puestos (al deshacer uno a medias), no hay nada que esperar.
+    setRellenando(false)
     if (motor.parchesPuestos === clave) return
     if (!clave) {
       motor.ponerParches(null, '')
@@ -125,7 +127,7 @@ export function Visor({ alAbrir }: { alAbrir: () => void }): ReactNode {
     setRellenando(true)
     parchesDe(ruta, fuente.current, manchas)
       .then((p) => {
-        if (!vivo) return
+        if (!vivo || !p) return
         motor.ponerParches(p, clave)
         setEntrada((n) => n + 1)
       })
@@ -136,6 +138,11 @@ export function Visor({ alAbrir }: { alAbrir: () => void }): ReactNode {
     }
     // `manchas` va dentro de `clave`; `cargada`, porque cargar otra vez la foto quita los parches.
   }, [lista, motor, ruta, clave, cargada, fail])
+
+  // Al abrir Eliminar, la foto se prepara para el pincel mientras la ventana está libre.
+  useEffect(() => {
+    if (lista && herramienta === 'eliminar' && ruta && fuente.current) prepararEliminar(ruta, fuente.current)
+  }, [lista, herramienta, ruta, cargada])
 
   // La aberración se mide una vez por foto, cuando se pide.
   const conAberracion = !!revelado?.aberracion
@@ -195,11 +202,12 @@ export function Visor({ alAbrir }: { alAbrir: () => void }): ReactNode {
   }
 
   // Las teclas del zoom: Z, Ctrl + y Ctrl −; y la barra espaciadora para moverse en Eliminar.
-  const vivo = useRef({ conZoom, nivel, encajar, ventana, ampliable, lista })
-  vivo.current = { conZoom, nivel, encajar, ventana, ampliable, lista }
+  const vivo = useRef({ conZoom, nivel, encajar, ventana, ampliable, lista, herramienta })
+  vivo.current = { conZoom, nivel, encajar, ventana, ampliable, lista, herramienta }
   useEffect(() => {
+    // Solo donde se escribe: tras mover un deslizador el foco se queda en él, y Z y el espacio tienen que seguir valiendo.
     const enFormulario = (t: EventTarget | null): boolean =>
-      t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement
+      (t instanceof HTMLInputElement && !['range', 'button'].includes(t.type)) || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement
     const abajo = (e: KeyboardEvent): void => {
       const v = vivo.current
       if (!v.lista || !v.ampliable || e.altKey || e.metaKey || document.querySelector('.overlay')) return
@@ -217,8 +225,8 @@ export function Visor({ alAbrir }: { alAbrir: () => void }): ReactNode {
         e.preventDefault()
         const ant = [...NIVELES].reverse().find((n) => n < v.nivel - 1e-6)
         ampliar(ant && ant > v.encajar + 1e-6 ? ant : null, centroVista)
-      } else if (k === ' ' && !e.ctrlKey) {
-        if (e.target instanceof HTMLButtonElement) return
+      } else if (k === ' ' && !e.ctrlKey && v.herramienta === 'eliminar' && v.conZoom) {
+        if (e.target instanceof HTMLButtonElement || (e.target instanceof HTMLInputElement && e.target.type === 'checkbox')) return
         e.preventDefault()
         setEspacio(true)
       }

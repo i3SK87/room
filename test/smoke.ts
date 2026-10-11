@@ -30,6 +30,7 @@ import {
   razonDeRecorte,
   redimensionar
 } from '../src/shared/geometria'
+import { anotar, describirCambio, irA, MAX_PASOS, nuevoHistorial } from '../src/shared/historial'
 import { buscarFuente, curarMancha, mascara, medirAberracion, pegar, reducir, type Imagen } from '../src/shared/curar'
 
 let fallos = 0
@@ -396,6 +397,38 @@ grupo('Aberración cromática', () => {
   const { rojo, azul } = medirAberracion({ ancho: W, alto: H, datos })
   ok(Math.abs(rojo - 0.002) <= 0.0004, `encuentra el rojo desplazado (${rojo.toFixed(4)})`)
   ok(Math.abs(azul) <= 0.0003, `y deja el azul (${azul.toFixed(4)})`)
+})
+
+/* ---------- Historial ---------- */
+
+grupo('Historial', () => {
+  const n = reveladoNeutro()
+  const h = nuevoHistorial(n)
+  ok(h.pasos.length === 1 && h.pasos[0].nombre === 'Al abrir', 'empieza con un paso')
+  ok(!anotar(h, reveladoNeutro()), 'lo que no cambia no es un paso')
+  anotar(h, { ...n, exposicion: 2.5 })
+  ok(h.pasos[1].nombre === 'Exposición +2,50', 'cada paso lleva su nombre y su valor')
+  anotar(h, { ...n, exposicion: 2.5, grano: 60 })
+  ok(h.pasos[2].nombre === 'Grano 60', 'el nombre es lo que cambió en ese paso')
+  ok(irA(h, 0)?.exposicion === 0 && h.indice === 0, 'ir a un paso devuelve la foto a como estaba')
+  ok(irA(h, 0) === null, 'ir al mismo paso no hace nada')
+  irA(h, 2)
+  irA(h, 1)
+  anotar(h, { ...n, exposicion: 2.5, contraste: 30 })
+  ok(h.pasos.length === 3 && h.pasos[2].nombre === 'Contraste +30', 'cambiar desde atrás descarta lo de después')
+  anotar(h, { ...n, ruidoL: 40 }, 'Ajuste «Noche»')
+  ok(h.pasos[3].nombre === 'Ajuste «Noche»', 'un nombre dado manda')
+  ok(describirCambio(n, { ...n, exposicion: 1, contraste: 10 }) === 'Varios ajustes', 'dos cosas a la vez: varios ajustes')
+  ok(describirCambio(n, { ...n, ruidoL: 30 }) === 'Ruido: luminancia 30', 'los de ruido dicen que son de ruido')
+  ok(describirCambio(n, { ...n, geometria: conAngulo(n.geometria, 3.5, 4032, 3024) }) === 'Enderezar +3,5°', 'enderezar con su ángulo')
+  ok(describirCambio(n, { ...n, geometria: conGiro(n.geometria, 1, 4032, 3024) }) === 'Girar', 'girar')
+  const m: Mancha = { id: 'x', modo: 'clonar', puntos: [{ x: 0.5, y: 0.5 }], tamano: 0.02, desvanecer: 50, opacidad: 100, fuente: { dx: 0.1, dy: 0 } }
+  ok(describirCambio(n, { ...n, manchas: [m] }) === 'Trazo: Clonar', 'un trazo nuevo, con su modo')
+  ok(describirCambio({ ...n, manchas: [m] }, { ...n, manchas: [{ ...m, fuente: { dx: 0.2, dy: 0 } }] }) === 'Cambiar el origen', 'mover el origen')
+  ok(describirCambio({ ...n, manchas: [m] }, n) === 'Borrar trazo', 'borrar un trazo')
+  const largo = nuevoHistorial(n)
+  for (let i = 1; i <= MAX_PASOS + 20; i++) anotar(largo, { ...n, grano: i % 100, halo: Math.floor(i / 100) })
+  ok(largo.pasos.length === MAX_PASOS && largo.pasos[0].nombre === 'Al abrir', 'lleno, se olvidan los viejos pero no el primero')
 })
 
 /* ---------- EXIF ---------- */

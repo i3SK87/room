@@ -1,6 +1,6 @@
 /**
  * La barra lateral de la casa, con el carrete: las fotos abiertas, cada una
- * con su miniatura ya revelada.
+ * con su miniatura ya revelada. Debajo, el historial de la que se mira.
  *
  * Clic derecho sobre una foto: enseñarla en su carpeta o quitarla del
  * carrete. Quitarla no borra nada: ni el archivo ni su revelado, que vuelve
@@ -13,6 +13,7 @@ import { MenuContextual, useMenu } from 'casa/menu'
 import { estaTocado } from '@shared/revelado'
 import { useStore, type Foto } from '../lib/store'
 import { AvisoVersion } from './Actualizacion'
+import { Historial } from './Historial'
 import marca from '../../../../resources/icon.png'
 
 function estado(f: Foto): string {
@@ -58,6 +59,8 @@ export function Carrete({ alAbrir, alAjustes }: { alAbrir: () => void; alAjustes
           </button>
         ))}
       </div>
+
+      <Historial />
 
       <div className="carrete-abajo">
         <button className="nav-item carrete-abrir" onClick={alAbrir} title="Abrir fotos (Ctrl+O)">

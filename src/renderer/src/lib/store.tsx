@@ -9,6 +9,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAvisos } from 'casa/ui'
+import { anotar, irA, nuevoHistorial, type Historial } from '@shared/historial'
 import { estaTocado, reveladoNeutro, type ModoMancha, type Revelado } from '@shared/revelado'
 import { leerCube, type Lut3D } from '@shared/cube'
 import type { Ajustes, Guardado, LutInfo } from '@shared/tipos'
@@ -30,12 +31,6 @@ export interface Foto {
   error: string | null
 }
 
-interface Historial {
-  atras: Revelado[]
-  adelante: Revelado[]
-  /** Lo último asentado: contra esto se compara para saber si hay algo nuevo. */
-  asentado: Revelado
-}
 
 export type Herramienta = 'recortar' | 'eliminar'
 
@@ -68,9 +63,12 @@ interface Estado {
   /** Cambia el revelado de la foto que se mira. */
   cambiar: (fn: (r: Revelado) => Revelado) => void
   /** Como `cambiar`, pero se asienta ya: aplicar un ajuste guardado, restablecer… */
-  sustituir: (r: Revelado) => void
+  sustituir: (r: Revelado, nombre?: string) => void
   deshacer: () => void
   rehacer: () => void
+  /** Los pasos de la foto que se mira, para el panel Historial. */
+  historial: { pasos: string[]; indice: number } | null
+  irAPaso: (i: number) => void
   ponerMiniatura: (id: string, url: string) => void
 
   guardados: Guardado[]
@@ -86,9 +84,6 @@ interface Estado {
 const Contexto = createContext<Estado | null>(null)
 
 const ASENTAR_MS = 450
-const MAX_HISTORIAL = 100
-
-const iguales = (a: Revelado, b: Revelado): boolean => JSON.stringify(a) === JSON.stringify(b)
 
 export function StoreProvider({ children }: { children: ReactNode }): ReactNode {
   const { fail, toast } = useAvisos()
@@ -120,6 +115,8 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
   const actualRef = useRef(actualId)
   actualRef.current = actualId
   const historiales = useRef(new Map<string, Historial>())
+  // Los historiales viven en una referencia; esto sube cuando cambian, para repintar el panel.
+  const [versionHistorial, setVersionHistorial] = useState(0)
   const temporizador = useRef<number | null>(null)
   const lutsLeidos = useRef(new Map<string, Lut3D>())
 
@@ -181,26 +178,28 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
     void window.room.fotos.recordar(f.ruta, estaTocado(f.revelado) ? f.revelado : null).catch(() => undefined)
   }, [])
 
-  /** Mete en el historial lo que haya cambiado desde la última vez. */
-  const asentar = useCallback(() => {
-    if (temporizador.current !== null) {
-      window.clearTimeout(temporizador.current)
-      temporizador.current = null
-    }
-    for (const f of fotosRef.current) {
-      const h = historiales.current.get(f.id)
-      if (!h || iguales(h.asentado, f.revelado)) continue
-      h.atras.push(h.asentado)
-      if (h.atras.length > MAX_HISTORIAL) h.atras.shift()
-      h.adelante = []
-      h.asentado = f.revelado
-      recordar(f)
-    }
-  }, [recordar])
+  /** Mete en el historial lo que haya cambiado desde la última vez, con su nombre. */
+  const asentar = useCallback(
+    (nombre?: string) => {
+      if (temporizador.current !== null) {
+        window.clearTimeout(temporizador.current)
+        temporizador.current = null
+      }
+      let algo = false
+      for (const f of fotosRef.current) {
+        const h = historiales.current.get(f.id)
+        if (!h || !anotar(h, f.revelado, f.id === actualRef.current ? nombre : undefined)) continue
+        recordar(f)
+        algo = true
+      }
+      if (algo) setVersionHistorial((n) => n + 1)
+    },
+    [recordar]
+  )
 
   const programarAsentar = useCallback(() => {
     if (temporizador.current !== null) window.clearTimeout(temporizador.current)
-    temporizador.current = window.setTimeout(asentar, ASENTAR_MS)
+    temporizador.current = window.setTimeout(() => asentar(), ASENTAR_MS)
   }, [asentar])
 
   const ponerRevelado = useCallback((id: string, r: Revelado) => {
@@ -223,36 +222,43 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
   )
 
   const sustituir = useCallback(
-    (r: Revelado) => {
+    (r: Revelado, nombre?: string) => {
       const id = actualRef.current
       if (!id) return
-      ponerRevelado(id, r)
+      // Lo que estuviera a medias va primero, con su propio nombre.
       asentar()
+      ponerRevelado(id, r)
+      asentar(nombre)
     },
     [ponerRevelado, asentar]
   )
 
-  const moverHistorial = useCallback(
-    (hacia: 'atras' | 'adelante') => {
+  /** Llevar la foto que se mira al paso `i` de su historial. */
+  const irAPaso = useCallback(
+    (i: number | ((h: Historial) => number)) => {
       asentar()
       const id = actualRef.current
       const f = fotosRef.current.find((x) => x.id === id)
       const h = id ? historiales.current.get(id) : undefined
       if (!f || !h) return
-      const pila = hacia === 'atras' ? h.atras : h.adelante
-      const otra = hacia === 'atras' ? h.adelante : h.atras
-      const r = pila.pop()
+      const r = irA(h, typeof i === 'function' ? i(h) : i)
       if (!r) return
-      otra.push(h.asentado)
-      h.asentado = r
       ponerRevelado(f.id, r)
       recordar({ ...f, revelado: r })
+      setVersionHistorial((n) => n + 1)
     },
     [asentar, ponerRevelado, recordar]
   )
 
-  const deshacer = useCallback(() => moverHistorial('atras'), [moverHistorial])
-  const rehacer = useCallback(() => moverHistorial('adelante'), [moverHistorial])
+  const deshacer = useCallback(() => irAPaso((h) => h.indice - 1), [irAPaso])
+  const rehacer = useCallback(() => irAPaso((h) => h.indice + 1), [irAPaso])
+
+  const historialVivo = actualId ? historiales.current.get(actualId) : undefined
+  const historial = useMemo(
+    () => (historialVivo ? { pasos: historialVivo.pasos.map((p) => p.nombre), indice: historialVivo.indice } : null),
+    // Los historiales viven en una referencia: `versionHistorial` dice cuándo han cambiado.
+    [historialVivo, versionHistorial]
+  )
 
   // Antes de cerrar, lo que quede por asentar va al disco.
   useEffect(() => {
@@ -282,7 +288,8 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
       try {
         const { info, fuente } = await fotoDecodificada(ruta)
         const revelado = info.revelado ?? reveladoNeutro()
-        historiales.current.set(id, { atras: [], adelante: [], asentado: revelado })
+        historiales.current.set(id, nuevoHistorial(revelado, estaTocado(revelado) ? 'Como la dejaste' : 'Al abrir'))
+        setVersionHistorial((n) => n + 1)
         let mini: string | null = null
         try {
           const m = motorTrabajo()
@@ -397,6 +404,8 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
       sustituir,
       deshacer,
       rehacer,
+      historial,
+      irAPaso,
       ponerMiniatura,
       guardados,
       recargarGuardados,
@@ -422,6 +431,8 @@ export function StoreProvider({ children }: { children: ReactNode }): ReactNode 
       sustituir,
       deshacer,
       rehacer,
+      historial,
+      irAPaso,
       ponerMiniatura,
       guardados,
       recargarGuardados,

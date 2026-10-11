@@ -122,7 +122,7 @@ export function Panel(): ReactNode {
             disabled={apagado}
             onChange={(e) => {
               const g = guardados.find((x) => x.id === e.target.value)
-              if (g) sustituir(conLoDeLaFoto(g.revelado, r))
+              if (g) sustituir(conLoDeLaFoto(g.revelado, r), `Ajuste «${g.nombre}»`)
             }}
             onContextMenu={coincide ? abrirMenu(coincide.id) : undefined}
             title={coincide ? 'Clic derecho: borrar este ajuste' : undefined}
@@ -210,7 +210,7 @@ export function Panel(): ReactNode {
 
       <div className="panel-pie">
         <span className="small subtle">Doble clic en un control lo devuelve a cero</span>
-        <button className="btn ghost small" disabled={apagado} onClick={() => sustituir(reveladoNeutro())}>
+        <button className="btn ghost small" disabled={apagado} onClick={() => sustituir(reveladoNeutro(), 'Restablecer todo')}>
           Restablecer todo
         </button>
       </div>
