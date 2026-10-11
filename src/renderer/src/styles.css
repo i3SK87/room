@@ -1,0 +1,549 @@
+/* ============================================================
+   ROOM — lo propio
+
+   Lo común (paletas, barra lateral, botones, campos, diálogos,
+   avisos, menú del clic derecho) viene de la casa: `casa/paletas.css`
+   y `casa/base.css`. Aquí solo está lo de un cuarto de revelado: el
+   carrete, el visor de la foto y el panel de controles.
+
+   Nada de colores sueltos salvo las muestras del mezclador y de los
+   canales de la curva, que son el color del que hablan.
+   ============================================================ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- Estructura: nada se desplaza entero ---------- */
+
+.main.main-room {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
+.topbar-titulo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.topbar-titulo h1 {
+  margin: 0;
+}
+
+.room-cuerpo {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* ---------- El carrete ---------- */
+
+.carrete-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+
+.nav-item.carrete-item {
+  padding: 7px 8px;
+  gap: 10px;
+}
+
+.carrete-mini {
+  flex: none;
+  width: 48px;
+  height: 36px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06) center / cover no-repeat;
+  display: grid;
+  place-items: center;
+}
+
+.carrete-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.carrete-nombre {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.carrete-estado {
+  font-size: 11px;
+  font-weight: 450;
+  color: var(--sidebar-fg);
+  opacity: 0.85;
+}
+
+.carrete-abajo {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item.carrete-abrir {
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.carrete-pista {
+  font-size: 11px;
+  text-align: center;
+  color: var(--sidebar-fg);
+  opacity: 0.7;
+  padding-bottom: 8px;
+}
+
+.spinner.pequeno {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+/* En la barra estrecha de 64 px, la miniatura sola. */
+@media (max-width: 1080px) {
+  .nav-item.carrete-item {
+    padding: 6px 0;
+  }
+  .nav-item.carrete-abrir {
+    border: 0;
+  }
+}
+
+/* ---------- El visor ---------- */
+
+.visor {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.visor > .empty {
+  max-width: 420px;
+}
+
+.visor-foto {
+  position: relative;
+  flex: none;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.visor-foto canvas {
+  display: block;
+}
+
+.visor-antes {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+}
+
+.visor-pie {
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-subtle);
+  pointer-events: none;
+}
+
+.visor-cargando {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* ---------- El panel ---------- */
+
+.panel {
+  flex: none;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.panel.apagado .panel-secciones,
+.panel.apagado .panel-pie {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.panel-guardado {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-guardado-fila,
+.lut-fila {
+  display: flex;
+  gap: 8px;
+}
+
+.panel-guardado-fila .select,
+.lut-fila .select {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-pie {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px 16px 18px;
+}
+
+/* ---------- Secciones ---------- */
+
+.seccion {
+  border-bottom: 1px solid var(--border);
+}
+
+.seccion h2 {
+  margin: 0;
+}
+
+.seccion-cabecera {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.seccion-cabecera:hover {
+  background: color-mix(in srgb, var(--bg-sunken) 50%, transparent);
+}
+
+.seccion-flecha {
+  flex: none;
+  color: var(--fg-muted);
+  transition: transform 0.12s ease;
+}
+
+.seccion-flecha.plegada {
+  transform: rotate(-90deg);
+}
+
+.seccion-titulo {
+  flex: none;
+}
+
+.seccion-punto {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.seccion-pista {
+  margin-left: auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 450;
+  color: var(--fg-subtle);
+}
+
+.seccion-cuerpo {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 2px 18px 18px;
+}
+
+.seccion-cuerpo > .segmented {
+  align-self: stretch;
+}
+
+.seccion-cuerpo > .segmented button {
+  flex: 1;
+}
+
+/* ---------- Deslizadores ---------- */
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.control.apagado {
+  opacity: 0.5;
+}
+
+.control-fila {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-fila label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  cursor: default;
+  user-select: none;
+}
+
+.control-muestra {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.control-valor {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel .deslizador {
+  max-width: none;
+}
+
+.deslizador.con-color::-webkit-slider-thumb {
+  background: var(--muestra);
+}
+
+/* ---------- Curva de tonos ---------- */
+
+.curva {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.curva > .segmented button {
+  flex: 1;
+}
+
+.curva-caja {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  cursor: crosshair;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.curva-caja svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.curva-rejilla {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  fill: none;
+}
+
+.curva-diagonal {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+  fill: none;
+}
+
+.curva-linea {
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  fill: none;
+}
+
+.curva-punto {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  border: 2px solid;
+  background: var(--bg-elevated);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.curva-punto.marcado {
+  background: currentColor;
+}
+
+.curva-pie {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------- Ruedas ---------- */
+
+.ruedas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rueda {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.rueda-disco {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  cursor: crosshair;
+  touch-action: none;
+  background:
+    radial-gradient(circle, #8a8794 0%, rgba(138, 135, 148, 0) 72%),
+    conic-gradient(
+      hsl(0 70% 55%),
+      hsl(60 70% 55%),
+      hsl(120 70% 55%),
+      hsl(180 70% 55%),
+      hsl(240 70% 55%),
+      hsl(300 70% 55%),
+      hsl(360 70% 55%)
+    );
+}
+
+.rueda-punto {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+/* ---------- LUT ---------- */
+
+.lut-exportar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.lut-exportar .btn {
+  justify-content: center;
+}
+
+.lut-exportar .small {
+  line-height: 1.45;
+}
+
+.aviso-texto {
+  color: var(--warning);
+}
+
+/* ---------- Diálogos ---------- */
+
+.exportar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.exportar .deslizador {
+  max-width: none;
+}
+
+.exportar-carpeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.exportar-carpeta > span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------- Soltar fotos ---------- */
+
+.soltar {
+  position: fixed;
+  inset: 12px;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 600;
+  pointer-events: none;
+}

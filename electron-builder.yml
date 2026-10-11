@@ -1,0 +1,34 @@
+appId: com.room.desktop
+productName: ROOM
+directories:
+  buildResources: resources
+  output: release
+files:
+  - out/**
+  # Las pruebas se compilan en out/test y no pintan nada en el instalador.
+  - '!out/test/**'
+  - package.json
+  # El icono lo necesita la ventana en tiempo de ejecución.
+  - resources/icon.ico
+  - resources/icon.png
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    # La vía de repuesto, como en BONK y CLAC: la carpeta suelta, por si el
+    # filtro de Windows no deja pasar el instalador.
+    - target: zip
+      arch: [x64]
+  artifactName: ${productName}-${version}-portable.${ext}
+nsis:
+  artifactName: ${productName}-${version}-Setup.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ROOM
+  installerLanguages: [es_ES]
+  language: 1034
+  # Desinstalar no se lleva los revelados, los ajustes guardados ni los LUT.
+  deleteAppDataOnUninstall: false
