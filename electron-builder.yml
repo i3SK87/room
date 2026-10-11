@@ -11,7 +11,17 @@ files:
   # El icono lo necesita la ventana en tiempo de ejecución.
   - resources/icon.ico
   - resources/icon.png
+# De dónde saca ROOM las versiones nuevas, como BONK y CLAC: las releases del
+# repo, que es público y no pide token. Es también lo que hace que la
+# compilación escriba el «latest.yml» con el que compara el actualizador.
+publish:
+  provider: github
+  owner: i3SK87
+  repo: room
 win:
+  # No hay certificado, así que no se comprueba firma; sí el sha512 de cada
+  # archivo contra el del «latest.yml», que llega por HTTPS desde GitHub.
+  verifyUpdateCodeSignature: false
   target:
     - target: nsis
       arch: [x64]

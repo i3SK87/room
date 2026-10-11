@@ -28,6 +28,7 @@ import {
   rutaLut
 } from './datos'
 import { exifDe, leerFoto } from './fotos'
+import { buscarActualizacion, descargarActualizacion, estadoActualizacion, instalarActualizacion } from './actualizaciones'
 
 type Manejador = (...args: never[]) => unknown
 
@@ -148,4 +149,11 @@ export function registrarIpc(): void {
   /* — Ajustes de la aplicación — */
   canal('ajustes:leer', () => leerAjustes())
   canal('ajustes:cambiar', (cambios: Partial<Ajustes>) => cambiarAjustes(cambios))
+  canal('app:version', () => app.getVersion())
+
+  /* — Versiones nuevas — */
+  canal('actualizacion:estado', () => estadoActualizacion())
+  canal('actualizacion:buscar', () => buscarActualizacion())
+  canal('actualizacion:descargar', () => descargarActualizacion())
+  canal('actualizacion:instalar', () => instalarActualizacion())
 }

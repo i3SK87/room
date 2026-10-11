@@ -48,4 +48,4 @@ empaquetar `test/arnes/entrada.ts` en `out/test/arnes.cjs` (ver el arnés) y
 
 ## Publicar
 
-`npm run dist` deja el instalador y el portable en `release/`. Sin firmar.
+`npm run dist` deja en `release/` el instalador, el portable, `latest.yml` y el `.blockmap`. Sin firmar. La release de GitHub (`i3SK87/room`, pública para que el actualizador la lea sin token) lleva los **cuatro**: sin `latest.yml` el actualizador no encuentra con qué comparar. Orden: typecheck, test, versión en `package.json`, commit, push, etiqueta `vX`, `npm run dist`, `gh release create vX` con los cuatro archivos.

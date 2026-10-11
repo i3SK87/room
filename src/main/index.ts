@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { registrarIpc } from './ipc'
 import { cerrarDatos, leerAjustes } from './datos'
 import { pararDecodificador } from './fotos'
+import { iniciarActualizaciones } from './actualizaciones'
 
 let ventana: BrowserWindow | null = null
 
@@ -88,6 +89,10 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(null)
     registrarIpc()
     crearVentana()
+    iniciarActualizaciones(
+      (estado) => ventana?.webContents.send('actualizacion:cambio', estado),
+      () => leerAjustes().buscarVersiones
+    )
   })
 
   app.on('window-all-closed', () => {

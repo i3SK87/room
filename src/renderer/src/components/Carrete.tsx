@@ -12,6 +12,7 @@ import { useAvisos } from 'casa/ui'
 import { MenuContextual, useMenu } from 'casa/menu'
 import { estaTocado } from '@shared/revelado'
 import { useStore, type Foto } from '../lib/store'
+import { AvisoVersion } from './Actualizacion'
 import marca from '../../../../resources/icon.png'
 
 function estado(f: Foto): string {
@@ -68,6 +69,7 @@ export function Carrete({ alAbrir, alAjustes }: { alAbrir: () => void; alAjustes
           <Settings size={16} strokeWidth={1.8} />
           <span className="nav-label">Ajustes</span>
         </button>
+        <AvisoVersion />
       </div>
 
       {menu && (

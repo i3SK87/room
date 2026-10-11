@@ -43,6 +43,8 @@ export interface Ajustes {
   carpetaExportar: string | null
   formato: Formato
   calidad: number
+  /** Al abrir, mirar en GitHub si hay versión nueva. */
+  buscarVersiones: boolean
 }
 
 export const AJUSTES_DE_FABRICA: Ajustes = {
@@ -50,5 +52,17 @@ export const AJUSTES_DE_FABRICA: Ajustes = {
   paleta: 'ghost',
   carpetaExportar: null,
   formato: 'jpeg',
-  calidad: 92
+  calidad: 92,
+  buscarVersiones: true
+}
+
+export interface EstadoActualizacion {
+  /** «disponible» espera a que se pulse: no se baja nada hasta entonces. */
+  fase: 'ociosa' | 'buscando' | 'disponible' | 'descargando' | 'lista' | 'error'
+  version: string | null
+  /** De 0 a 100 mientras se descarga. */
+  porcentaje: number
+  /** Cuándo se miró por última vez sin fallar, en ISO. */
+  comprobadaEn: string | null
+  mensaje: string | null
 }

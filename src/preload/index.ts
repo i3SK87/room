@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { Revelado } from '@shared/revelado'
-import type { Ajustes, FotoLeida, Formato, Guardado, LutInfo } from '@shared/tipos'
+import type { Ajustes, EstadoActualizacion, FotoLeida, Formato, Guardado, LutInfo } from '@shared/tipos'
 
 interface Sobre<T> {
   ok: boolean
@@ -56,6 +56,22 @@ const api = {
   ajustes: {
     leer: () => llamar<Ajustes>('ajustes:leer'),
     cambiar: (cambios: Partial<Ajustes>) => llamar<Ajustes>('ajustes:cambiar', cambios)
+  },
+  version: () => llamar<string>('app:version'),
+  actualizacion: {
+    estado: () => llamar<EstadoActualizacion>('actualizacion:estado'),
+    buscar: () => llamar<EstadoActualizacion>('actualizacion:buscar'),
+    /** Arranca la descarga; el progreso llega por `alCambiar`. */
+    descargar: () => llamar<boolean>('actualizacion:descargar'),
+    /** Cierra y vuelve a abrir ya actualizada. `false` si no había nada listo. */
+    instalar: () => llamar<boolean>('actualizacion:instalar'),
+    alCambiar: (fn: (e: EstadoActualizacion) => void) => {
+      const envoltorio = (_e: IpcRendererEvent, estado: EstadoActualizacion): void => fn(estado)
+      ipcRenderer.on('actualizacion:cambio', envoltorio)
+      return () => {
+        ipcRenderer.removeListener('actualizacion:cambio', envoltorio)
+      }
+    }
   }
 }
 
